@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 # Wine Reviews Data Analysis
 
-## introduction/overview/executive summary
+## Introduction/overview/executive summary
 
 The data set is from the Wine Reviews project on Kaggle (https://www.kaggle.com/zynicide/wine-reviews). The data is protected under https://creativecommons.org/licenses/by-nc-sa/4.0/.  User zackthoutt scraped the data.  
 
@@ -35,7 +35,7 @@ The goal of my project was to build a model to predict the quality of wines base
 
 The key steps in the project included data cleaning, exploration and visualization of the data. I also used 16 different models in the Caret package on a small data subset to determine the best regression model to use for building the final prediction model.  
 
-## methods/analysis
+## Methods/analysis
 section that explains the process and techniques used, such as data cleaning, data exploration and visualization, any insights gained, and your modeling approach
 
 ```{r libs, echo=FALSE}
@@ -353,7 +353,7 @@ wines %>%
 
 ```
 
-# results
+# Results
 
 Set up the train and test set with the test set (wine-test) 10 percent of the data.
 
@@ -474,44 +474,38 @@ rmse_results[which.min(rmse_results$RMSE),]
 The model with the lowest RMSE is gbm. Train this model on the  wine_train set and use it to predict the points for the wine_test set.
 ```{r final-model}
 fit <- train(points ~ ., method = "gbm", data = wine_train)
-#fit            
+
+#model
+fit            
 
 # Loss function to calculate RMSE
 myRMSE <- function(true_ratings, predicted_ratings){
   sqrt(mean((true_ratings - predicted_ratings)^2))
 }
 
-# Predict the poits in the test set
+# Predict the points in the test set
 y_hat <- predict(fit,wine_test)
 #round values to points
 y_hat <- ifelse(y_hat >100,100,ifelse(y_hat<80,80,round(y_hat)))
 
-confusionMatrix(data = as.factor(y_hat),reference = as.factor(wine_test$points))
+#confusionMatrix(data = as.factor(y_hat),reference = as.factor(wine_test$points))
 confusionMatrix(data = as.factor(y_hat),reference = as.factor(wine_test$points))$overall["Accuracy"]
-myRMSE(wine_test$points,y_hat)
-#RMSE = 2.037
 
+# Use loss function to calculate RMSE
+myRMSE(wine_test$points,y_hat)
+#RMSE = 2.068
+
+```
+
+Plot model:
+```{r plot-model}
 par(mfrow = c(2,2))
 plot(fit)
 ```
 
 
+# Conclusion
 
+The RMSE is quite low and prediction accuracy is not very high. There is a positive correlation between price and points and also between wordcount and points. Both of these correlations are weak to moderate and as such not very strong predictors points.  
 
-# conclusion
-section
-
-
-```{r cars}
-summary(cars)
-```
-
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+Better results could possibly be obtained by parameter tuning of the models and also perhaps by using some of the predictors that were excluded. Using a different list to calculate the winewords score would also alter the values of this predictor and add or remove bias that could have an affect on the accuracy of the predictions.

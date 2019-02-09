@@ -453,52 +453,22 @@ myRMSE <- function(true_ratings, predicted_ratings){
   sqrt(mean((true_ratings - predicted_ratings)^2))
 }
 
+#predict test set results
 y_hat <- predict(fit,wine_test)
 #round values to points
 y_hat <- ifelse(y_hat >100,100,ifelse(y_hat<80,80,round(y_hat)))
 
-confusionMatrix(data = as.factor(y_hat),reference = as.factor(wine_test$points))
+#confusionMatrix(data = as.factor(y_hat),reference = as.factor(wine_test$points))
 confusionMatrix(data = as.factor(y_hat),reference = as.factor(wine_test$points))$overall["Accuracy"]
+
+# Use loss function to calculate RMSE
 myRMSE(wine_test$points,y_hat)
-#RMSE = 2.037
+#RMSE = 2.068
 
 par(mfrow = c(2,2))
 plot(fit)
 
 ################################
-#### Could be end of report ####
+#### End of report ####
 ################################
 ################################
-
-
-
-wine_test %>%
-  ggplot(aes(y_hat, points, color = y_hat/points)) +
-  geom_point()
-
-fits$knn
-fits$svmLinear
-y_hat <- predict(fits$svmLinear,wine_test)
-
-#stratify y_hat
-max(y_hat)
-min(y_hat)
-y_hat <- ifelse(y_hat >100,100,ifelse(y_hat<80,80,round(y_hat)))
-
-levels(as.factor(y_hat))
-levels(as.factor(wine_test$points))
-
-confusionMatrix(data = as.factor(y_hat), reference = as.factor(wine_test$points))
-
-sum(y_hat-wine_test$points)/length(wine_test$points)
-plot(wine_test$points,y_hat-wine_test$points)
-
-plot(y_hat)
-plot(wine_test$points)
-
-myScore <- function(true_ratings, predicted_ratings){
-  mean(ifelse(abs(true_ratings-predicted_ratings)<2,1,0))
-}
-result<-myScore(wine_test$points,y_hat)
-result
-
