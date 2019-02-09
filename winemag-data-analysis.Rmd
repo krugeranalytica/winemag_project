@@ -1,0 +1,517 @@
+---
+title: "winemag-data-analysis"
+author: "Kru123"
+date: "2/9/2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Wine Reviews Data Analysis
+
+## introduction/overview/executive summary
+
+The data set is from the Wine Reviews project on Kaggle (https://www.kaggle.com/zynicide/wine-reviews). The data is protected under https://creativecommons.org/licenses/by-nc-sa/4.0/.  User zackthoutt scraped the data.  
+
+####Columns in the data are:
+(descriptions are from the original data posting on Kaggle)  
+* country - The country that the wine is from  
+* description  
+* designation - The vineyard within the winery where the grapes that made the wine are from  
+* points - The number of points WineEnthusiast rated the wine on a scale of 1-100 (though they say they only post reviews for wines that score >=80)  
+* price - The cost for a bottle of wine  
+* province - The province or state that the wine is from  
+* region_1 - The wine growing area in a province or state (ie Napa)  
+* region_2 - Sometimes there are more specific regions specified within a wine growing area (ie Rutherford inside the Napa Valley), but this value can sometimes be blank  
+* taster_name  
+* taster_twitter_handle  
+* title - The title of the wine review, which often contains the vintage if you're interested in extracting that feature  
+* variety - The type of grapes used to make the wine (ie Pinot Noir)  
+* winery - The winery that made the wine  
+  
+The goal of my project was to build a model to predict the quality of wines based on the price, a description from a sommelier, the vintage and color of the wine.  
+
+The key steps in the project included data cleaning, exploration and visualization of the data. I also used 16 different models in the Caret package on a small data subset to determine the best regression model to use for building the final prediction model.  
+
+## methods/analysis
+section that explains the process and techniques used, such as data cleaning, data exploration and visualization, any insights gained, and your modeling approach
+
+```{r libs, echo=FALSE}
+if(!require(tidyverse)) install.packages("tidyverse", repos = "http://cran.us.r-project.org")
+if(!require(caret)) install.packages("caret", repos = "http://cran.us.r-project.org")
+if(!require(dplyr)) install.packages("dplyr", repos = "http://cran.us.r-project.org")
+```
+Libraries used:
+```{r libs2}
+library(caret)
+library(dplyr)
+library(tidyverse)
+```
+
+Download the data:
+```{r data-download}
+dl <- tempfile()
+download.file("http://kaffeinekard.net/data/winemag-data-130k-v2.csv", dl)
+```
+
+Load the data:
+```{r data-load}
+dat <- read.csv(dl, stringsAsFactors = FALSE)
+rm(dl)
+```
+
+Look at a summary of the data:
+```{r summarise-data}
+summary(dat)
+```
+
+We see that price has NA values that we want to remove because we want to predict points based on price.
+```{r remove-na}
+dat_no_na <- dat[complete.cases(dat),]
+# how much did we remove
+(nrow(dat) - nrow(dat_no_na))/nrow(dat)*100
+```
+
+We want to use the description in the analysis. To do this I am looking at the number of words in the description as a measure of the description. Add the variable wordcount to the data set.
+```{r add-wordcount}
+dat_no_na <- dat_no_na %>%
+  mutate(wordcount = sapply(strsplit(description, " "), length))
+```
+
+Extract the year out of the title column since the vintage can be a predictor for the quality.
+```{r add-year}
+dat_no_na <- dat_no_na %>%
+  extract(title, c("year"), regex = "([0-9]{4})", remove = F)
+dat_no_na$year <- as.integer(dat_no_na$year)
+```
+
+I want to look only at wines from the 1900's and 200's and also some titles contain dates that are not the wine vintage. We can remove the records.
+```{r remove-years}
+# filter older than current year and younger than 1900 because obvious date extract issues
+dat_no_na <- dat_no_na %>%
+  filter(year>1900 & year <2019)
+dat_no_na <- dat_no_na[complete.cases(dat_no_na),]
+```
+
+To make sure we look only at wines with enough reviews we are limiting the data set to only wines with more than 100 reviews.
+```{r filter-reviews}
+dat_no_na <- dat_no_na %>%
+  group_by(variety) %>%
+  filter(n() > 100) %>%
+  ungroup(variety)
+```
+
+Some countries do not have many wine reviews and to have enough variation we filter the data to include only records from countries with more than 1000 reviews.
+```{r filter-countries}
+dat_country <- dat_no_na %>%
+  group_by(country) %>%
+  filter(n()>=1000) %>%
+  ungroup(country)
+```
+
+Because there could be variation in quality based on where the wine originates and the color of the wine we are going to add the continent and the color of the wine.
+```{r add-continent-color}
+# Use the country to determine continent
+
+americas <- c("Argentina","Brazil","Canada","Chile","Mexico","Peru",
+              "Uruguay","US")
+africas <- c("Morocco","South Africa")
+australias <- c("Australia","New Zealand")
+europes <- c("Armenia","Austria","Bulgaria","Croatio","Cyprus","Czech Republic",
+            "England","France","Georgia","Germany","Greece","Hungary","Italy",
+            "Luxembourg","Macedonia","Moldova","Portugal","Romania",
+            "Serbia","Slovakia","Spain","Switzerland","Turkey","Ukraine")
+asias <- c("India","Israel","Lebanon")
+
+dat_country <- dat_country %>%
+  mutate(continent = ifelse(country %in% americas,"Ame",
+                            ifelse(country %in% africas,"Afr",
+                                   ifelse(country %in% australias, "Aus",
+                                          ifelse(country %in% europes, "Eur",
+                                                 ifelse(country %in% asias, "Asi","Unk"))))))
+# do we have any unclassified countries?
+dat_country[dat_country$continent=="Unk",]
+
+dat_country$continent <- as.factor(dat_country$continent)
+
+# Use the variety to classify the wines into red or white.
+
+reds <- c("Aglianico","Barbera","Blaufränkisch","Bonarda","Bordeaux-style Red Blend",
+          "Cabernet Franc","Cabernet Sauvignon","Cabernet Sauvignon-Merlot",
+          "Cabernet Sauvignon-Syrah","Carmenère","Champagne Blend",
+          "Corvina, Rondinella, Molinara","Dolcetto","G-S-M","Gamay",
+          "Garnacha","Grenache","Malbec","Mencía","Meritage","Merlot",
+          "Monastrell","Montepulciano","Mourvèdre","Nebbiolo","Nerello Mascalese",
+          "Nero d'Avola","Petit Verdot","Petite Sirah","Pinot Nero","Pinot Noir",
+          "Pinotage","Port","Portuguese Red","Primitivo","Red Blend",
+          "Rhône-style Red Blend","Sangiovese","Sangiovese Grosso","Shiraz",
+          "Syrah","Tannat","Tempranillo","Tempranillo Blend","Tinta de Toro",
+          "Touriga Nacional","Zinfandel","Zweigelt")
+whites <- c("Albariño","Alvarinho","Bordeaux-style White Blend","Chardonnay",
+            "Chenin Blanc","Fiano","Friulano","Garganega","Gewürztraminer",
+            "Glera","Greco","Grenache Blanc","Grillo","Grüner Veltliner",
+            "Melon","Moscato","Muscat","Pinot Bianco","Pinot Blanc",
+            "Pinot Grigio","Pinot Gris","Portuguese White",
+            "Rhône-style White Blend","Riesling","Rosé","Roussanne",
+            "Sauvignon","Sauvignon Blanc","Sémillon","Sparkling Blend",
+            "Torrontés","Turbiana","Verdejo","Verdicchio","Vermentino",
+            "Vernaccia","Viognier","Viura","White Blend")
+
+dat_country <- dat_country %>%
+  mutate(color = ifelse(variety %in% reds,"Red",
+                        ifelse(variety %in% whites, "White","Unk")))
+
+# did we miss any?
+dat_country[dat_country$color=="Unk",14]
+
+dat_country$color <- as.factor(dat_country$color)
+
+```
+
+At this point I was wondering if the specific flavors used by a sommelier in describing the wine could be a predictor. I used the flavors that are used to describe red and white wines from the website winefolly (https://winefolly.com/review/identifying-flavors-in-wine/) to create a list of words that can be used to give a score to the description based on the number of words matching the list. This score was added as column winewords.
+
+```{r add-winewords}
+sommelier_words <- c("blackberry","black currant","marionberry","black plum","blueberry",
+                     "black cherry","black raspberry","acai","jam","prune","fig","black raisins",
+                     "cranberry","pomegranate","red currant","bing cherry","strawberry","cherry",
+                     "raspberry","red plum","goji berry","dragon fruit","candied cherries","candied berries",
+                     "apricot","peach","white peach","nectarine","apple","pear","red grapefruit",
+                     "orange","pink grapefruit","passion fruit","lemon","lime","pineapple")
+
+
+wcount <- sapply(sommelier_words, function(sw){
+  str_count(dat_country$description,sw)
+})
+
+dat_country <- dat_country %>%
+  mutate(winewords = rowSums(wcount))
+
+```
+
+The taster column is sparsely populated with only 18 unique tasters and over 22,000 blank values and thus not much help.
+```{r unique-taster}
+# taster is sparsely populated
+dat_country %>%
+  summarise(n_user = n_distinct(taster_name),
+            n_wines = n_distinct(title))
+```
+
+Other columns like designation, winery and province have great variance with only one or two wines in many cases. We will not use these columns.
+
+Create the cleaned data set and remove data sets and other objects that are not needed. At this point I will also change the order of the resulting columns to group the numerical and categorical variables together and have the results column on the right.
+```{r final-data}
+wines <- dat_country %>%
+  select(-X,-country,-description,-designation,-province,-region_1,-region_2,
+         -taster_name,-taster_twitter_handle,-title,-variety,-winery)
+
+rm(dat,dat_country,dat_no_na,africas,americas,asias,
+   australias,europes,reds,whites, sommelier_words,wcount)
+
+#reorder columns
+wines <- wines[c("price","year","wordcount","winewords","continent","color","points")]
+
+```
+
+### Data exploration
+
+Now that we have the final data set we can do data exploration and visualization.
+```{r dim-class}
+#dimensions of dataset
+dim(wines)
+# type for each attribute
+sapply(wines,class)
+```
+
+Have a look at the data.
+```{r head}
+head(wines)
+```
+
+And look at the summary statistics for each column.
+```{r stats}
+summary(wines)
+```
+
+Levels of the categorical variables.
+```{r levels}
+levels(wines$continent)
+levels(wines$color)
+```
+
+Frequency tables for the categorical variables.
+```{r distribution}
+percentage <- prop.table(table(wines$color))*100
+cbind(freq=table(wines$color), percentage=percentage)
+
+percentage <- prop.table(table(wines$continent))*100
+cbind(freq=table(wines$continent), percentage=percentage)
+```
+
+### Visualize the data
+
+Univariate plots for numerical variables:
+```{r univariate-plots}
+# univariate plots
+x_num<-wines[,1:4]
+x_fac<-wines[,5:6]
+y<-wines[,7]
+
+#numerical input ditribution
+
+par(mfrow=c(1,4))
+for (i in 1:4) {
+  boxplot(x_num[,i], main=names(wines)[i])
+}
+```
+
+Univariate plots for the factor inputs:
+```{r factor-plots}
+#factor input distribution
+par(mfrow=c(1,2))
+for (i in 1:2) {
+  plot(x_fac[,i], main=names(wines)[i+4])
+}
+```
+
+Distribution of the output variable or points:
+```{r output-plot}
+# output distribution
+boxplot(y,main=names(wines)[7])
+```
+
+Multivariate plots:
+```{r multivariate plots}
+# price vs points
+wines %>%
+  ggplot(aes(x=price,y=points)) +
+  geom_point() +
+  scale_x_log10()
+
+# year vs points
+wines %>%
+  ggplot(aes(x=year,y=points)) +
+  geom_point()
+
+# wordcount vs points
+wines %>%
+  ggplot(aes(x=wordcount,y=points)) +
+  geom_point() +
+  scale_x_log10()
+
+# winewords vs points
+wines %>%
+  ggplot(aes(x=winewords,y=points)) +
+  geom_point()
+
+# continent vs points
+wines %>%
+  ggplot(aes(x=continent,y=points,fill=continent)) +
+  geom_boxplot()
+
+# continent vs points for each color
+wines %>%
+  ggplot(aes(x=continent,y=points,fill = color)) +
+  geom_boxplot()
+
+# color vs points
+wines %>%
+  ggplot(aes(x=color,y=points,fill=color)) +
+  geom_boxplot()
+
+# color vs wordcount for fun
+wines %>%
+  ggplot(aes(x=color,y=wordcount, col=color)) +
+  geom_jitter()
+
+```
+
+Correlation between predictors and points:
+```{r correlation}
+# price and points
+cor(log(wines$price),wines$points)
+
+# year and points
+cor(wines$year,wines$points)
+
+# wordcount and points
+cor(wines$wordcount,wines$points)
+
+# winewords and points
+cor(wines$winewords,wines$points)
+```
+
+Density plots of the variables:
+```{r density-plots}
+wines %>%
+  select_if(is.numeric) %>%
+  gather(metric, value) %>%
+  ggplot(aes(value, fill = metric)) +
+  geom_density(show.legend = FALSE) +
+  facet_wrap( ~ metric, scales = "free")
+
+```
+
+# results
+
+Set up the train and test set with the test set (wine-test) 10 percent of the data.
+
+```{r train-test}
+#set up test and train
+set.seed(123)
+test_index <- createDataPartition(y = wines$points, times = 1, p=0.1, list = FALSE)
+
+wine_train <- wines[-test_index,]
+temp <- wines[test_index,]
+
+## Make sure variety and year in test set is in train set as well
+wine_test <- temp %>%
+  semi_join(wine_train, by = "continent") %>%
+  semi_join(wine_train, by = "price") %>%
+  semi_join(wine_train, by = "year") %>%
+  semi_join(wine_train, by = "color")
+
+# add rows removed from test set back to train set
+removed <- anti_join(temp, wine_test)
+wine_train <- rbind(wine_train, removed)
+
+rm(temp, removed)
+
+#summarize dataset
+summary(wine_train)
+```
+
+To reduce the time to run all 16 models create wines_mini, a small subset with 100 records of wine_train so that we can run all the models to find the best model before we run it on the large train set.
+```{r wines_mini}
+# small test to test models and get timing
+set.seed(123)
+wines_mini <- sample_n(wine_train,1000)
+```
+
+Build all the models on wines_mini to see if the complete and determine the best model to use for the final build.
+```{r models-mini}
+models <- c("lm","svmLinear",
+            "gamLoess", 
+            "knn", "kknn", "gam",
+            "rf", "ranger", "Rborist", 
+            "avNNet", "mlp", "monmlp",
+            "gbm",
+            "svmRadial", "svmRadialCost", "svmRadialSigma")
+
+
+fits <- lapply(models, function(model){ 
+  print(model)
+  fit <- train(points ~ ., method = model, data = wines_mini)
+  
+}) 
+
+names(fits) <- models
+```
+
+Write the resulting RMSE's to a recordset and select the one with the lowest RMSE for the final model.
+```{r results-mini-models, echo=FALSE}
+rmse_results <-data_frame(method = names(fits[1]), RMSE = fits$lm$results$RMSE)
+rmse_results<-bind_rows(rmse_results,
+                       data_frame(method = names(fits[2]),
+                                  RMSE = fits$svmLinear$results$RMSE))
+rmse_results<-bind_rows(rmse_results,
+                        data_frame(method = names(fits[3]),
+                                   RMSE = fits$gamLoess$results$RMSE))
+rmse_results<-bind_rows(rmse_results,
+                        data_frame(method = names(fits[4]),
+                                   RMSE = fits$knn$results$RMSE))
+rmse_results<-bind_rows(rmse_results,
+                        data_frame(method = names(fits[5]),
+                                   RMSE = fits$kknn$results$RMSE))
+rmse_results<-bind_rows(rmse_results,
+                        data_frame(method = names(fits[6]),
+                                   RMSE = fits$gam$results$RMSE))
+rmse_results<-bind_rows(rmse_results,
+                        data_frame(method = names(fits[7]),
+                                   RMSE = fits$rf$results$RMSE))
+rmse_results<-bind_rows(rmse_results,
+                        data_frame(method = names(fits[8]),
+                                   RMSE = fits$ranger$results$RMSE))
+rmse_results<-bind_rows(rmse_results,
+                        data_frame(method = names(fits[9]),
+                                   RMSE = fits$Rborist$results$RMSE))
+rmse_results<-bind_rows(rmse_results,
+                        data_frame(method = names(fits[10]),
+                                   RMSE = fits$avNNet$results$RMSE))
+rmse_results<-bind_rows(rmse_results,
+                        data_frame(method = names(fits[11]),
+                                   RMSE = fits$mlp$results$RMSE))
+rmse_results<-bind_rows(rmse_results,
+                        data_frame(method = names(fits[12]),
+                                   RMSE = fits$monmlp$results$RMSE))
+rmse_results<-bind_rows(rmse_results,
+                        data_frame(method = names(fits[13]),
+                                   RMSE = fits$gbm$results$RMSE))
+rmse_results<-bind_rows(rmse_results,
+                        data_frame(method = names(fits[14]),
+                                   RMSE = fits$svmRadial$results$RMSE))
+rmse_results<-bind_rows(rmse_results,
+                        data_frame(method = names(fits[15]),
+                                   RMSE = fits$svmRadialCost$results$RMSE))
+rmse_results<-bind_rows(rmse_results,
+                        data_frame(method = names(fits[16]),
+                                   RMSE = fits$svmRadialSigma$results$RMSE))
+
+```
+
+RMSE results of the different models:
+```{r rmse-results}
+rmse_results %>% knitr::kable()
+```
+
+Model with the lowest RMSE:
+```{r}
+#model with lowest RMSE
+rmse_results[which.min(rmse_results$RMSE),]
+```
+
+The model with the lowest RMSE is gbm. Train this model on the  wine_train set and use it to predict the points for the wine_test set.
+```{r final-model}
+fit <- train(points ~ ., method = "gbm", data = wine_train)
+#fit            
+
+# Loss function to calculate RMSE
+myRMSE <- function(true_ratings, predicted_ratings){
+  sqrt(mean((true_ratings - predicted_ratings)^2))
+}
+
+# Predict the poits in the test set
+y_hat <- predict(fit,wine_test)
+#round values to points
+y_hat <- ifelse(y_hat >100,100,ifelse(y_hat<80,80,round(y_hat)))
+
+confusionMatrix(data = as.factor(y_hat),reference = as.factor(wine_test$points))
+confusionMatrix(data = as.factor(y_hat),reference = as.factor(wine_test$points))$overall["Accuracy"]
+myRMSE(wine_test$points,y_hat)
+#RMSE = 2.037
+
+par(mfrow = c(2,2))
+plot(fit)
+```
+
+
+
+
+# conclusion
+section
+
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
